@@ -4,6 +4,8 @@
     "module": "commonjs",
     "outDir": "./dist",
     "rootDir": "./src",
+    "incremental": true, // Reuses compilation data
+    "tsBuildInfoFile": "./.cache/tsbuildinfo", // Caches to disk
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
