@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "start": "node dist/app.js",
+    "start": "node index.js",
     "dev": "nodemon src/app.ts",
     "build": "tsc -p . && copyfiles -u 1 \"src/templates/**/*\" dist",
     "test:payment": "ts-node src/test/payment.test.ts"
