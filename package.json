@@ -5,7 +5,7 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon src/app.ts",
-    "build": "tsc -p . && copyfiles -u 1 \"src/templates/**/*\" dist",
+    "build": "tsc --incremental --skipLibCheck",
     "test:payment": "ts-node src/test/payment.test.ts"
   },
   "author": "Cre8 hub By Zanix",
