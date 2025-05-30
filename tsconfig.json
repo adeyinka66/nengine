@@ -9,6 +9,7 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
+    "noEmitOnError": true,
     "forceConsistentCasingInFileNames": true,
     "typeRoots": ["./node_modules/@types"]
   },
