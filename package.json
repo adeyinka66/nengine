@@ -3,12 +3,12 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
+    "start": "node dist/app.js",
     "dev": "nodemon src/app.ts",
     "build": "tsc -p . && copyfiles -u 1 \"src/templates/**/*\" dist",
     "test:payment": "ts-node src/test/payment.test.ts"
   },
-  "author": "Cre8 Hub By Zanix",
+  "author": "Cre8 hub By Zanix",
   "license": "ISC",
   "description": "",
   "dependencies": {
