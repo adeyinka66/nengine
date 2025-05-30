@@ -56,7 +56,11 @@ const connectDB = async () => {
       throw new Error('MongoDB connection string is not defined');
     }
 
-    await mongoose.connect(MONGODB_URI, {});
+    await mongoose.connect(MONGODB_URI, {
+      serverSelectionTimeoutMS: 30000, // 30 seconds timeout
+      socketTimeoutMS: 45000,
+      family: 4,
+    });
     console.log('Connected to MongoDB successfully');
 
     // Initialize admin accounts after successful connection
