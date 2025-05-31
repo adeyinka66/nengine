@@ -29,7 +29,10 @@ const app = (0, express_1.default)();
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 // CORS configuration
 const corsOptions = {
-    origin: process.env.ALLOWED_ORIGINS || '*',
+    origin: [
+        'http://localhost:5174', // Local frontend
+        // 'https://your-production-frontend.com' // Live frontend
+    ],
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
