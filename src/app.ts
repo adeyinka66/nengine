@@ -15,7 +15,7 @@ import {errorHandler} from './middleware/errorMiddleware';
 import {initializeAdmin} from './utils/initializeAdmin';
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 
 // CORS configuration
 const corsOptions = {
@@ -73,7 +73,7 @@ const connectDB = async () => {
 
 // Start server only after DB connection
 connectDB().then(() => {
-  app.listen(PORT,  () => {
+  app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server is running on port ${PORT}`);
   });
 });
