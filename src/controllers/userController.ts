@@ -139,14 +139,14 @@ export const register: RequestHandler = async (
   next: NextFunction,
 ): Promise<void> => {
   try {
-    const {firstName, lastName, email, password, adminToken} = req.body;
+    const {firstName, lastName, email, phoneNumber, password, adminToken} = req.body;
 
     // Validate required fields
-    if (!firstName || !lastName || !email || !password) {
+    if (!firstName || !lastName || !email || !password || !phoneNumber) {
       res.status(400).json({
         success: false,
         message:
-          'Missing required fields. Please provide firstName, lastName, email, and password.',
+          'Missing required fields. Please provide the missing information || Incomplete info.',
         error: 'VALIDATION_ERROR',
       });
       return;
@@ -212,6 +212,7 @@ export const register: RequestHandler = async (
       firstName,
       lastName,
       email,
+      phoneNumber,
       password,
       role, // Use the determined role
       isVerified: true,
