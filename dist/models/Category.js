@@ -33,14 +33,20 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.Category = void 0;
 const mongoose_1 = __importStar(require("mongoose"));
-const FavoriteSchema = new mongoose_1.Schema({
-    user: { type: mongoose_1.Schema.Types.ObjectId, ref: 'User', required: true },
-    items: [
-        {
-            product: { type: mongoose_1.Schema.Types.ObjectId, ref: 'Product', required: true },
-        },
-    ],
+const CategorySchema = new mongoose_1.Schema({
+    name: {
+        type: String,
+        required: [true, 'Category name is required'],
+        unique: true,
+        trim: true
+    },
+    description: {
+        type: String,
+        required: [true, 'Category description is required']
+    }
+}, {
+    timestamps: true
 });
-// This is where we could add middleware or validation if needed
-exports.default = mongoose_1.default.model('Favorite', FavoriteSchema);
+exports.Category = mongoose_1.default.model('Category', CategorySchema);

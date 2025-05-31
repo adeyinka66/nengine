@@ -98,7 +98,16 @@ const addToCart = (req, res, next) => __awaiter(void 0, void 0, void 0, function
                 res.status(404).json({ success: false, message: 'Product not found' });
                 return;
             }
-            cart.items.push({ product: productId, quantity, price: product.price });
+            // Check if the product has a valid discount
+            const now = new Date();
+            const hasValidDiscount = product.discountPrice &&
+                (!product.discountStartDate || now >= product.discountStartDate) &&
+                (!product.discountEndDate || now <= product.discountEndDate);
+            // Use discounted price if valid, otherwise use regular price
+            const priceToUse = hasValidDiscount && product.discountPrice
+                ? product.discountPrice
+                : product.price;
+            cart.items.push({ product: productId, quantity, price: priceToUse });
         }
         yield cart.save();
         res
@@ -187,14 +196,21 @@ const clearCart = (req, res, next) => __awaiter(void 0, void 0, void 0, function
             res.status(401).json({ success: false, message: 'User not authenticated' });
             return;
         }
-        const cart = yield Cart_1.default.findOneAndUpdate({ user: req.user._id }, { items: [] }, { new: true });
+        const cart = yield Cart_1.default.findOneAndUpdate({ user: req.user._id }, {
+            items: [],
+            subtotal: 0, // Reset subtotal
+            shipping: 0, // Reset shipping
+            total: 0, // Reset total
+        }, { new: true });
         if (!cart) {
             res.status(404).json({ success: false, message: 'Cart not found' });
             return;
         }
-        res
-            .status(200)
-            .json({ success: true, data: cart, message: 'Cart cleared successfully' });
+        res.status(200).json({
+            success: true,
+            data: cart,
+            message: 'Cart cleared successfully',
+        });
     }
     catch (error) {
         res.status(500).json({

@@ -15,32 +15,52 @@ var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (
 }) : function(o, v) {
     o["default"] = v;
 });
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-};
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
 const mongoose_1 = __importStar(require("mongoose"));
 const OrderSchema = new mongoose_1.Schema({
     orderNumber: {
         type: String,
         required: true,
-        unique: true
+        unique: true,
     },
     user: { type: mongoose_1.Schema.Types.ObjectId, ref: 'User', required: true },
-    items: [{
-            productId: { type: mongoose_1.Schema.Types.ObjectId, ref: 'Product', required: true },
+    orderId: { type: String, required: true },
+    items: [
+        {
+            productId: {
+                type: mongoose_1.Schema.Types.ObjectId,
+                ref: 'Product',
+                required: true,
+            },
             quantity: { type: Number, required: true },
-            price: { type: Number, required: true }
-        }],
+            price: { type: Number, required: true },
+        },
+    ],
+    subtotal: { type: Number, required: true },
+    discountCode: { type: String, default: null },
+    discountAmount: { type: Number, default: 0 },
     totalAmount: { type: Number, required: true },
     status: {
         type: String,
         enum: ['pending', 'processing', 'shipped', 'delivered', 'cancelled'],
-        default: 'pending'
+        default: 'pending',
     },
     shippingAddress: {
         street: { type: String, required: true },
@@ -48,7 +68,7 @@ const OrderSchema = new mongoose_1.Schema({
         state: { type: String, required: true },
         zipCode: { type: String, required: true },
         country: { type: String, required: true },
-        phone: { type: String, required: true }
+        phone: { type: String, required: true },
     },
     payment: {
         provider: { type: String, enum: ['paypal'], required: true },
@@ -56,14 +76,19 @@ const OrderSchema = new mongoose_1.Schema({
         status: {
             type: String,
             enum: ['pending', 'completed', 'failed', 'refunded'],
-            required: true
+            required: true,
         },
         paidAmount: { type: Number, required: true },
-        paidAt: { type: Date }
+        paidAt: { type: Date },
+    },
+    paymentStatus: {
+        type: String,
+        enum: ['pending', 'completed', 'failed', 'refunded'],
+        required: true,
     },
     cancelReason: { type: String },
-    cancelledAt: { type: Date }
+    cancelledAt: { type: Date },
 }, {
-    timestamps: true
+    timestamps: true,
 });
 exports.default = mongoose_1.default.model('Order', OrderSchema);

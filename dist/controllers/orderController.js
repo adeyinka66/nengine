@@ -16,6 +16,10 @@ exports.getAllOrders = exports.getOrderStats = exports.getOrdersByDateRange = ex
 const Order_1 = __importDefault(require("../models/Order"));
 const Cart_1 = __importDefault(require("../models/Cart"));
 const crypto_1 = __importDefault(require("crypto"));
+const catchAsyncErrors_1 = require("../middleware/catchAsyncErrors");
+const emailService_1 = require("../services/emailService");
+const User_1 = __importDefault(require("../models/User"));
+const emailService = new emailService_1.EmailService(); // Create instance
 // Helper function to generate order number
 function generateOrderNumber() {
     return __awaiter(this, void 0, void 0, function* () {
@@ -33,7 +37,6 @@ function generateOrderNumber() {
             return `ORD-${nextNumber.toString().padStart(4, '0')}`;
         }
         catch (error) {
-            console.error('Error generating order number:', error);
             // Fallback to timestamp-based number if something goes wrong
             const timestamp = Date.now();
             return `ORD-${timestamp}`;
@@ -45,18 +48,28 @@ function generatePaymentId() {
     return `PAY-${crypto_1.default.randomBytes(8).toString('hex')}-${Date.now()}`;
 }
 // Create a new order
-const createOrder = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+exports.createOrder = (0, catchAsyncErrors_1.catchAsyncErrors)((req, res, next) => __awaiter(void 0, void 0, void 0, function* () {
     var _a;
     try {
         const userId = (_a = req.user) === null || _a === void 0 ? void 0 : _a._id;
-        const { cartId, shippingAddress, paymentId } = req.body;
         if (!userId) {
-            res.status(401).json({
-                success: false,
-                message: 'User not authenticated',
-            });
+            res
+                .status(401)
+                .json({ success: false, message: 'User not authenticated' });
             return;
         }
+        // Get user details from database
+        const user = yield User_1.default.findById(userId);
+        if (!user) {
+            res.status(404).json({ success: false, message: 'User not found' });
+            return;
+        }
+        console.log('User making order:', {
+            userId: user._id,
+            email: user.email,
+            name: `${user.firstName} ${user.lastName}`,
+        });
+        const { cartId, shippingAddress, paymentId, orderId, paymentStatus } = req.body;
         const cart = yield Cart_1.default.findById(cartId).populate('items.product');
         if (!cart || cart.items.length === 0) {
             res.status(400).json({
@@ -65,57 +78,79 @@ const createOrder = (req, res) => __awaiter(void 0, void 0, void 0, function* ()
             });
             return;
         }
-        // Calculate totals
+        // Calculate subtotal (original amount before discount)
         const subtotal = cart.items.reduce((total, item) => total + item.price * item.quantity, 0);
-        const tax = subtotal * 0.1; // 10% tax
-        const shippingCost = subtotal > 100 ? 0 : 10; // Free shipping over $100
-        const totalAmount = subtotal + tax + shippingCost;
-        // Generate order number first
+        // Get discount information from the cart
+        const discountCode = cart.discountCode || null;
+        const discountAmount = cart.discountAmount || 0;
+        // Calculate total amount (after applying discount)
+        const totalAmount = subtotal - discountAmount;
+        // Generate order number
         const orderNumber = yield generateOrderNumber();
-        console.log('Generated order number:', orderNumber);
         // Generate unique payment ID for testing
         const actualPaymentId = paymentId || generatePaymentId();
-        console.log('Using payment ID:', actualPaymentId);
         // Create order items from cart items
         const orderItems = cart.items.map(item => ({
             productId: item.product._id,
             quantity: item.quantity,
-            price: item.price
+            price: item.price,
         }));
         // Create the order
         const order = new Order_1.default({
             orderNumber,
             user: userId,
             items: orderItems,
-            totalAmount,
+            orderId: orderId,
+            subtotal, // Save original amount before discount
+            discountCode, // Save the discount code used
+            discountAmount, // Save the discount amount applied
+            totalAmount, // Save the final amount after discount
             shippingAddress: Object.assign(Object.assign({}, shippingAddress), { phone: shippingAddress.phone.toString() }),
             payment: {
                 provider: 'paypal',
                 transactionId: actualPaymentId,
-                status: 'pending',
+                status: 'completed',
                 paidAmount: totalAmount,
-                paidAt: new Date()
-            }
+                paidAt: new Date(),
+            },
+            paymentStatus: paymentStatus,
         });
         yield order.save();
+        // Send order confirmation email to customer
+        console.log('Sending order confirmation to:', user.email);
+        yield emailService.sendOrderConfirmationEmail(user.email, {
+            orderNumber: order.orderNumber,
+            orderDate: order.createdAt,
+            items: cart.items,
+            total: order.totalAmount,
+            subtotal: order.subtotal,
+            discountAmount: order.discountAmount,
+            discountCode: order.discountCode,
+            shippingAddress: order.shippingAddress,
+            siteName: 'Green Phone Shop',
+            year: new Date().getFullYear(),
+        });
+        console.log('Order confirmation email sent');
+        // Send notification to admin
+        yield emailService.sendAdminOrderNotificationEmail({
+            orderNumber: order._id,
+            customerName: `${user.firstName} ${user.lastName}`,
+            orderDate: order.createdAt,
+            total: order.totalAmount,
+        });
         // Clear the cart after successful order creation
         yield Cart_1.default.findByIdAndDelete(cartId);
         res.status(201).json({
             success: true,
             message: 'Order created successfully',
-            data: order
+            data: order,
         });
     }
     catch (error) {
         console.error('Error creating order:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error creating order',
-            error: error instanceof Error ? error.message : 'Unknown error'
-        });
+        next(error);
     }
-});
-exports.createOrder = createOrder;
+}));
 // Get all orders for a user
 const getOrders = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     var _a;
@@ -181,7 +216,13 @@ const updateOrderStatus = (req, res) => __awaiter(void 0, void 0, void 0, functi
         const { status } = req.body;
         const userId = (_a = req.user) === null || _a === void 0 ? void 0 : _a._id;
         // Validate status
-        const validStatuses = ['pending', 'processing', 'shipped', 'delivered', 'cancelled'];
+        const validStatuses = [
+            'pending',
+            'processing',
+            'shipped',
+            'delivered',
+            'cancelled',
+        ];
         if (!validStatuses.includes(status)) {
             res.status(400).json({
                 success: false,
@@ -219,7 +260,7 @@ const cancelOrder = (req, res) => __awaiter(void 0, void 0, void 0, function* ()
         const { id } = req.params;
         const { cancelReason } = req.body;
         const userId = (_a = req.user) === null || _a === void 0 ? void 0 : _a._id;
-        const order = yield Order_1.default.findOne({ _id: id, user: userId });
+        const order = (yield Order_1.default.findOne({ _id: id, user: userId }));
         if (!order) {
             res.status(404).json({
                 success: false,
@@ -361,8 +402,12 @@ const getAllOrders = (req, res) => __awaiter(void 0, void 0, void 0, function* (
         const sortBy = req.query.sortBy || 'createdAt';
         const sortOrder = req.query.sortOrder === 'asc' ? 1 : -1;
         const status = req.query.status;
-        const startDate = req.query.startDate ? new Date(req.query.startDate) : null;
-        const endDate = req.query.endDate ? new Date(req.query.endDate) : null;
+        const startDate = req.query.startDate
+            ? new Date(req.query.startDate)
+            : null;
+        const endDate = req.query.endDate
+            ? new Date(req.query.endDate)
+            : null;
         // Build filter object
         const filter = {};
         if (status) {
@@ -387,7 +432,7 @@ const getAllOrders = (req, res) => __awaiter(void 0, void 0, void 0, function* (
             .sort({ [sortBy]: sortOrder })
             .skip(skip)
             .limit(limit)
-            .populate('user', 'username email')
+            .populate('user', 'firstName lastName email')
             .populate('items.productId', 'name price');
         res.json({
             success: true,
@@ -399,17 +444,16 @@ const getAllOrders = (req, res) => __awaiter(void 0, void 0, void 0, function* (
                     totalPages,
                     totalItems: totalOrders,
                     hasNextPage: page < totalPages,
-                    hasPrevPage: page > 1
-                }
-            }
+                    hasPrevPage: page > 1,
+                },
+            },
         });
     }
     catch (error) {
-        console.error('Error fetching orders:', error);
         res.status(500).json({
             success: false,
             message: 'Error fetching orders',
-            error: error instanceof Error ? error.message : 'Unknown error'
+            error: error.message,
         });
     }
 });

@@ -15,13 +15,23 @@ var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (
 }) : function(o, v) {
     o["default"] = v;
 });
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-};
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -33,8 +43,7 @@ const router = express_1.default.Router();
 // Public routes
 router.post('/register', userController.register);
 router.post('/login', userController.loginLimiter, userController.login);
-router.post('/forgot-password', userController.passwordResetLimiter, userController.forgotPassword);
-router.post('/reset-password', userController.passwordResetLimiter, userController.resetPassword);
+router.post('/forgot-password', userController.forgotPassword);
 // Authenticated user routes
 router.get('/profile', authMiddleware_1.authenticate, (req, res, next) => {
     const authenticatedReq = req;
@@ -50,8 +59,14 @@ router.get('/admin/:id', authMiddleware_1.authenticate, authMiddleware_1.authori
 router.put('/admin/:id', authMiddleware_1.authenticate, authMiddleware_1.authorizeAdmin, userController.updateUser);
 router.delete('/admin/:id', authMiddleware_1.authenticate, authMiddleware_1.authorizeAdmin, userController.deleteUser);
 router.patch('/admin/:id/role', authMiddleware_1.authenticate, authMiddleware_1.authorizeAdmin, userController.updateUserRole);
-router.get('/admin/token', authMiddleware_1.authenticate, authMiddleware_1.authorizeAdmin, (req, res, next) => {
+router.get('/generate-admin-token', authMiddleware_1.authenticate, authMiddleware_1.authorizeAdmin, (req, res, next) => {
     const authenticatedReq = req;
     userController.generateAdminCreationToken(authenticatedReq, res, next);
 });
+// Update reset password route to not require token
+router.post('/reset-password', userController.resetPassword);
+router.post('/password/forgot', userController.forgotPassword);
+router.put('/password/reset/:token', userController.resetPassword);
+// Admin creation route
+router.post('/admin/register', userController.createAdmin);
 exports.default = router;

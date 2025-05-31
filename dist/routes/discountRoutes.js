@@ -32,15 +32,21 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
-const mongoose_1 = __importStar(require("mongoose"));
-const FavoriteSchema = new mongoose_1.Schema({
-    user: { type: mongoose_1.Schema.Types.ObjectId, ref: 'User', required: true },
-    items: [
-        {
-            product: { type: mongoose_1.Schema.Types.ObjectId, ref: 'Product', required: true },
-        },
-    ],
-});
-// This is where we could add middleware or validation if needed
-exports.default = mongoose_1.default.model('Favorite', FavoriteSchema);
+const express_1 = __importDefault(require("express"));
+const discountController = __importStar(require("../controllers/discountController"));
+const authMiddleware_1 = require("../middleware/authMiddleware");
+const router = express_1.default.Router();
+// Admin routes (Create, Read, Update, Delete)
+router.post('/', authMiddleware_1.authenticate, authMiddleware_1.authorizeAdmin, discountController.createDiscount);
+router.get('/', authMiddleware_1.authenticate, authMiddleware_1.authorizeAdmin, discountController.getAllDiscounts);
+router.get('/:id', authMiddleware_1.authenticate, authMiddleware_1.authorizeAdmin, discountController.getDiscountById);
+router.put('/:id', authMiddleware_1.authenticate, authMiddleware_1.authorizeAdmin, discountController.updateDiscount);
+router.delete('/:id', authMiddleware_1.authenticate, authMiddleware_1.authorizeAdmin, discountController.deleteDiscount);
+// Customer routes (apply/remove discount)
+router.post('/apply', authMiddleware_1.authenticate, discountController.applyDiscountToCart);
+router.delete('/remove', authMiddleware_1.authenticate, discountController.removeDiscountFromCart);
+exports.default = router;

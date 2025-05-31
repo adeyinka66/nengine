@@ -23,7 +23,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.updateUserRole = exports.deleteUser = exports.updateUser = exports.getUserById = exports.getAllUsers = exports.resetPassword = exports.forgotPassword = exports.updateProfile = exports.getProfile = exports.generateAdminCreationToken = exports.login = exports.register = exports.passwordResetLimiter = exports.loginLimiter = void 0;
+exports.createAdmin = exports.updateUserRole = exports.deleteUser = exports.updateUser = exports.getUserById = exports.getAllUsers = exports.resetPassword = exports.forgotPassword = exports.updateProfile = exports.getProfile = exports.generateAdminCreationToken = exports.login = exports.register = exports.passwordResetLimiter = exports.loginLimiter = void 0;
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const crypto_1 = __importDefault(require("crypto"));
@@ -31,31 +31,41 @@ const express_rate_limit_1 = __importDefault(require("express-rate-limit"));
 const User_1 = __importDefault(require("../models/User"));
 const password_validator_1 = __importDefault(require("password-validator"));
 const emailService_1 = require("../services/emailService");
+const errorHandler_1 = __importDefault(require("../utils/errorHandler"));
+const catchAsyncErrors_1 = require("../middleware/catchAsyncErrors");
 const emailService = new emailService_1.EmailService();
 // Password schema
 const passwordSchema = new password_validator_1.default();
 passwordSchema
-    .is().min(8)
-    .is().max(100)
-    .has().uppercase()
-    .has().lowercase()
-    .has().digits(1)
-    .has().symbols(1)
-    .has().not().spaces();
+    .is()
+    .min(8)
+    .is()
+    .max(100)
+    .has()
+    .uppercase()
+    .has()
+    .lowercase()
+    .has()
+    .digits(1)
+    .has()
+    .symbols(1)
+    .has()
+    .not()
+    .spaces();
 // Response messages
 const MESSAGES = {
     REGISTRATION: {
         SUCCESS: 'Registration successful! Welcome to Green Phone Shop.',
-        FIELDS_REQUIRED: 'Username, email, and password are required',
+        FIELDS_REQUIRED: 'First name, last name, email, and password are required',
         INVALID_PASSWORD: 'Password must be at least 8 characters long and include uppercase, lowercase, number, and special character',
-        USERNAME_EMAIL_EXISTS: 'Username or email already exists',
+        EMAIL_EXISTS: 'Email already exists',
     },
     AUTH: {
         LOGIN_SUCCESS: 'Login successful',
         INVALID_CREDENTIALS: 'Invalid email or password',
         UNAUTHORIZED: 'Unauthorized access',
         TOKEN_REQUIRED: 'Authentication token is required',
-        INVALID_TOKEN: 'Invalid authentication token'
+        INVALID_TOKEN: 'Invalid authentication token',
     },
     PASSWORD: {
         RESET_EMAIL_SENT: 'Password reset instructions sent to your email',
@@ -65,79 +75,143 @@ const MESSAGES = {
         EMAIL_REQUIRED: 'Email address is required',
         INVALID_PASSWORD: 'Password must be at least 8 characters long and include uppercase, lowercase, number, and special character',
         EMAIL_SERVICE_ERROR: 'Unable to send password reset email. Please try again later.',
-        EMAIL_SEND_ERROR: 'Failed to send password reset email. Please try again later.'
+        EMAIL_SEND_ERROR: 'Failed to send password reset email. Please try again later.',
     },
     PROFILE: {
         FETCH_SUCCESS: 'Profile retrieved successfully',
         UPDATE_SUCCESS: 'Profile updated successfully',
-        NOT_FOUND: 'User profile not found'
+        NOT_FOUND: 'User profile not found',
     },
     ADMIN: {
-        TOKEN_GENERATED: 'Admin creation token generated successfully'
+        TOKEN_GENERATED: 'Admin creation token generated successfully',
     },
     RATE_LIMIT: {
         LOGIN: 'Too many login attempts. Please try again after 15 minutes',
-        PASSWORD_RESET: 'Too many password reset attempts. Please try again after 1 hour'
+        PASSWORD_RESET: 'Too many password reset attempts. Please try again after 1 hour',
     },
     EMAIL: {
         SERVICE_ERROR: 'Email service is currently unavailable',
-        SEND_ERROR: 'Failed to send email. Please try again later.'
-    }
+        SEND_ERROR: 'Failed to send email. Please try again later.',
+    },
 };
 // Rate limiter for login attempts
 exports.loginLimiter = (0, express_rate_limit_1.default)({
     windowMs: 15 * 60 * 1000, // 15 minutes
     max: 25, // 5 attempts per window
-    message: { success: false, message: MESSAGES.RATE_LIMIT.LOGIN }
+    message: { success: false, message: MESSAGES.RATE_LIMIT.LOGIN },
 });
 // Rate limiter for password reset attempts
 exports.passwordResetLimiter = (0, express_rate_limit_1.default)({
     windowMs: 60 * 60 * 1000, // 1 hour
     max: 3, // 3 attempts per hour
-    message: { success: false, message: MESSAGES.RATE_LIMIT.PASSWORD_RESET }
+    message: { success: false, message: MESSAGES.RATE_LIMIT.PASSWORD_RESET },
 });
 // Register user
 const register = (req, res, next) => __awaiter(void 0, void 0, void 0, function* () {
     try {
-        const { username, email, password } = req.body;
-        // Check if user already exists
-        const existingUser = yield User_1.default.findOne({ $or: [{ email }, { username }] });
-        if (existingUser) {
+        const { firstName, lastName, email, password, adminToken } = req.body;
+        // Validate required fields
+        if (!firstName || !lastName || !email || !password) {
             res.status(400).json({
                 success: false,
-                message: existingUser.email === email ? 'Email already registered' : 'Username already taken'
+                message: 'Missing required fields. Please provide firstName, lastName, email, and password.',
+                error: 'VALIDATION_ERROR',
             });
             return;
         }
-        // Create new user
+        // Determine user role - check for admin token
+        let role = 'user';
+        if (adminToken) {
+            try {
+                // Verify admin token
+                const decoded = jsonwebtoken_1.default.verify(adminToken, process.env.ADMIN_CREATION_SECRET);
+                if (decoded && decoded.purpose === 'admin_creation') {
+                    role = 'admin';
+                    console.log('Admin account creation authorized');
+                }
+            }
+            catch (error) {
+                console.error('Invalid admin token:', error);
+                // Continue with user registration, just not as admin
+            }
+        }
+        // Validate email format
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) {
+            res.status(400).json({
+                success: false,
+                message: 'Please provide a valid email address.',
+                error: 'INVALID_EMAIL',
+            });
+            return;
+        }
+        // Validate password strength
+        if (!passwordSchema.validate(password)) {
+            res.status(400).json({
+                success: false,
+                message: 'Password must be at least 8 characters long and include uppercase, lowercase, number, and special character.',
+                error: 'WEAK_PASSWORD',
+            });
+            return;
+        }
+        // Check if user already exists
+        const existingUser = yield User_1.default.findOne({ email });
+        if (existingUser) {
+            res.status(409).json({
+                success: false,
+                message: 'An account with this email already exists. Please use a different email or try logging in.',
+                error: 'EMAIL_EXISTS',
+            });
+            return;
+        }
+        // Create new user with determined role
         const user = new User_1.default({
-            username,
+            firstName,
+            lastName,
             email,
             password,
-            role: 'user',
-            isVerified: true // Set to true since we're removing email verification
+            role, // Use the determined role
+            isVerified: true,
         });
-        yield user.save();
+        try {
+            yield user.save();
+        }
+        catch (saveError) {
+            // Handle mongoose validation errors
+            if (saveError.name === 'ValidationError') {
+                const validationErrors = Object.values(saveError.errors).map((err) => err.message);
+                res.status(400).json({
+                    success: false,
+                    message: 'Validation failed',
+                    error: 'VALIDATION_ERROR',
+                    details: validationErrors,
+                });
+                return;
+            }
+            throw saveError; // Re-throw other errors to be caught by the outer catch block
+        }
         // Send welcome email
         try {
-            console.log('Attempting to send welcome email to:', email);
-            yield emailService.sendWelcomeEmail(email, username);
-            console.log('Welcome email sent successfully');
+            yield emailService.sendWelcomeEmail(email, `${firstName} ${lastName}`);
         }
         catch (emailError) {
             console.error('Failed to send welcome email:', emailError);
-            // Log the error but don't block registration
+            // Continue with registration even if email fails
         }
         const _a = user.toObject(), { password: _ } = _a, userWithoutPassword = __rest(_a, ["password"]);
         res.status(201).json({
             success: true,
             data: userWithoutPassword,
-            message: 'Registration successful! Welcome to Green Phone Shop.'
+            message: `Welcome ${firstName}! Your account has been created successfully.`,
         });
     }
     catch (error) {
         console.error('Registration error:', error);
-        next(error);
+        res.status(500).json({
+            success: false,
+            message: 'An unexpected error occurred during registration. Please try again later.',
+            error: 'SERVER_ERROR',
+        });
     }
 });
 exports.register = register;
@@ -153,17 +227,31 @@ const login = (req, res, next) => __awaiter(void 0, void 0, void 0, function* ()
         }
         const user = yield User_1.default.findOne({ email }).select('+password');
         if (!user) {
-            res.status(401).json({ success: false, message: MESSAGES.AUTH.INVALID_CREDENTIALS });
+            res
+                .status(401)
+                .json({ success: false, message: MESSAGES.AUTH.INVALID_CREDENTIALS });
             return;
         }
-        console.log('Found user:', { email: user.email, hashedPassword: user.password });
+        // console.log('Found user:', {
+        //   email: user.email,
+        //   hashedPassword: user.password,
+        // });
         const isMatch = yield bcryptjs_1.default.compare(password, user.password);
-        console.log('Password comparison:', { isMatch, providedPassword: password });
+        // console.log('Password comparison:', {isMatch, providedPassword: password});
         if (!isMatch) {
-            res.status(401).json({ success: false, message: MESSAGES.AUTH.INVALID_CREDENTIALS });
+            res
+                .status(401)
+                .json({ success: false, message: MESSAGES.AUTH.INVALID_CREDENTIALS });
             return;
         }
         const token = jsonwebtoken_1.default.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '1d' });
+        // Set token in cookie
+        res.cookie('token', token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'strict',
+            maxAge: 24 * 60 * 60 * 1000, // 1 day
+        });
         res.json({
             success: true,
             message: MESSAGES.AUTH.LOGIN_SUCCESS,
@@ -171,7 +259,8 @@ const login = (req, res, next) => __awaiter(void 0, void 0, void 0, function* ()
                 token,
                 user: {
                     id: user._id,
-                    username: user.username,
+                    firstName: user.firstName,
+                    lastName: user.lastName,
                     email: user.email,
                     role: user.role,
                 },
@@ -222,12 +311,16 @@ const getProfile = (req, res, next) => __awaiter(void 0, void 0, void 0, functio
     var _a;
     try {
         if (!((_a = req.user) === null || _a === void 0 ? void 0 : _a.id)) {
-            res.status(401).json({ success: false, message: MESSAGES.AUTH.UNAUTHORIZED });
+            res
+                .status(401)
+                .json({ success: false, message: MESSAGES.AUTH.UNAUTHORIZED });
             return;
         }
         const user = yield User_1.default.findById(req.user._id).select('-password');
         if (!user) {
-            res.status(404).json({ success: false, message: MESSAGES.PROFILE.NOT_FOUND });
+            res
+                .status(404)
+                .json({ success: false, message: MESSAGES.PROFILE.NOT_FOUND });
             return;
         }
         res.json({
@@ -252,19 +345,23 @@ const updateProfile = (req, res, next) => __awaiter(void 0, void 0, void 0, func
     var _a;
     try {
         if (!((_a = req.user) === null || _a === void 0 ? void 0 : _a.id)) {
-            res.status(401).json({ success: false, message: MESSAGES.AUTH.UNAUTHORIZED });
+            res
+                .status(401)
+                .json({ success: false, message: MESSAGES.AUTH.UNAUTHORIZED });
             return;
         }
-        const { username, email } = req.body;
-        if (!username && !email) {
+        const { firstName, lastName, email } = req.body;
+        if (!firstName && !lastName && !email) {
             res
                 .status(400)
                 .json({ success: false, message: 'No update data provided' });
             return;
         }
-        const user = yield User_1.default.findByIdAndUpdate(req.user._id, { username, email }, { new: true, runValidators: true }).select('-password');
+        const user = yield User_1.default.findByIdAndUpdate(req.user._id, { firstName, lastName, email }, { new: true, runValidators: true }).select('-password');
         if (!user) {
-            res.status(404).json({ success: false, message: MESSAGES.PROFILE.NOT_FOUND });
+            res
+                .status(404)
+                .json({ success: false, message: MESSAGES.PROFILE.NOT_FOUND });
             return;
         }
         res.json({
@@ -284,111 +381,64 @@ const updateProfile = (req, res, next) => __awaiter(void 0, void 0, void 0, func
     }
 });
 exports.updateProfile = updateProfile;
-// Request password reset
-const forgotPassword = (req, res, next) => __awaiter(void 0, void 0, void 0, function* () {
-    try {
-        const { email } = req.body;
-        if (!email) {
-            res.status(400).json({ success: false, message: MESSAGES.PASSWORD.EMAIL_REQUIRED });
-            return;
-        }
-        const user = yield User_1.default.findOne({ email });
-        // Always return the same message whether user exists or not
-        if (!user) {
-            res.status(200).json({
-                success: true,
-                message: MESSAGES.PASSWORD.RESET_EMAIL_SENT
-            });
-            return;
-        }
-        // Generate reset token
-        const resetToken = crypto_1.default.randomBytes(32).toString('hex');
-        const resetTokenExpiry = new Date(Date.now() + 1 * 60 * 60 * 1000); // 1 hour
-        // Save reset token to user
-        user.resetToken = resetToken;
-        user.resetTokenExpiry = resetTokenExpiry;
-        yield user.save();
-        // Send reset email using the new email service
-        if (!emailService) {
-            console.error('Email service is not initialized');
-            res.status(500).json({
-                success: false,
-                message: MESSAGES.EMAIL.SERVICE_ERROR
-            });
-            return;
-        }
-        try {
-            yield emailService.sendPasswordResetEmail(email, resetToken);
-            res.status(200).json({
-                success: true,
-                message: MESSAGES.PASSWORD.RESET_EMAIL_SENT
-            });
-        }
-        catch (emailError) {
-            console.error('Failed to send password reset email:', emailError);
-            // Revert the token save since email failed
-            user.resetToken = undefined;
-            user.resetTokenExpiry = undefined;
-            yield user.save();
-            res.status(500).json({
-                success: false,
-                message: MESSAGES.EMAIL.SEND_ERROR
-            });
-        }
+// Forgot Password
+exports.forgotPassword = (0, catchAsyncErrors_1.catchAsyncErrors)((req, res, next) => __awaiter(void 0, void 0, void 0, function* () {
+    const { email } = req.body;
+    const user = yield User_1.default.findOne({ email });
+    if (!user) {
+        return next(new errorHandler_1.default('User not found with this email', 404));
     }
-    catch (error) {
-        next(error);
-    }
-});
-exports.forgotPassword = forgotPassword;
-// Reset password with token
-const resetPassword = (req, res, next) => __awaiter(void 0, void 0, void 0, function* () {
+    // Generate reset token
+    const resetToken = crypto_1.default.randomBytes(20).toString('hex');
+    // Hash and set to resetPasswordToken
+    user.resetPasswordToken = crypto_1.default
+        .createHash('sha256')
+        .update(resetToken)
+        .digest('hex');
+    // Set token expiry time
+    user.resetPasswordExpire = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes
+    yield user.save({ validateBeforeSave: false });
     try {
-        const { token, newPassword } = req.body;
-        if (!token || !newPassword) {
-            res.status(400).json({
-                success: false,
-                message: MESSAGES.PASSWORD.TOKEN_REQUIRED
-            });
-            return;
-        }
-        // Validate password strength
-        if (!passwordSchema.validate(newPassword)) {
-            res.status(400).json({
-                success: false,
-                message: MESSAGES.PASSWORD.INVALID_PASSWORD
-            });
-            return;
-        }
-        const user = yield User_1.default.findOne({
-            resetToken: token,
-            resetTokenExpiry: { $gt: new Date() }
-        });
-        if (!user) {
-            res.status(400).json({
-                success: false,
-                message: MESSAGES.PASSWORD.INVALID_RESET_TOKEN
-            });
-            return;
-        }
-        // Hash new password
-        const salt = yield bcryptjs_1.default.genSalt(10);
-        const hashedPassword = yield bcryptjs_1.default.hash(newPassword, salt);
-        // Update user password and clear reset token
-        user.password = hashedPassword;
-        user.resetToken = undefined;
-        user.resetTokenExpiry = undefined;
-        yield user.save();
+        yield emailService.sendPasswordResetEmail(user.email, resetToken);
         res.status(200).json({
             success: true,
-            message: MESSAGES.PASSWORD.RESET_SUCCESS
+            message: `Email sent to: ${user.email}`,
         });
     }
     catch (error) {
-        next(error);
+        user.resetPasswordToken = undefined;
+        user.resetPasswordExpire = undefined;
+        yield user.save({ validateBeforeSave: false });
+        return next(new errorHandler_1.default('Email could not be sent', 500));
     }
-});
-exports.resetPassword = resetPassword;
+}));
+// Reset Password
+exports.resetPassword = (0, catchAsyncErrors_1.catchAsyncErrors)((req, res, next) => __awaiter(void 0, void 0, void 0, function* () {
+    // Get hashed token
+    const resetPasswordToken = crypto_1.default
+        .createHash('sha256')
+        .update(req.params.token)
+        .digest('hex');
+    const user = yield User_1.default.findOne({
+        resetPasswordToken,
+        resetPasswordExpire: { $gt: Date.now() },
+    });
+    if (!user) {
+        return next(new errorHandler_1.default('Password reset token is invalid or has expired', 400));
+    }
+    if (req.body.password !== req.body.confirmPassword) {
+        return next(new errorHandler_1.default('Passwords do not match', 400));
+    }
+    // Setup new password
+    user.password = req.body.password;
+    user.resetPasswordToken = undefined;
+    user.resetPasswordExpire = undefined;
+    yield user.save();
+    res.status(200).json({
+        success: true,
+        message: 'Password updated successfully',
+    });
+}));
 // Admin: Get all users
 const getAllUsers = (req, res, next) => __awaiter(void 0, void 0, void 0, function* () {
     try {
@@ -400,7 +450,7 @@ const getAllUsers = (req, res, next) => __awaiter(void 0, void 0, void 0, functi
         res.status(200).json({
             success: true,
             data: usersWithoutPassword,
-            message: 'Users retrieved successfully'
+            message: 'Users retrieved successfully',
         });
     }
     catch (error) {
@@ -419,7 +469,7 @@ const getUserById = (req, res, next) => __awaiter(void 0, void 0, void 0, functi
         if (!isValidObjectId(id)) {
             res.status(400).json({
                 success: false,
-                message: 'Invalid user ID format'
+                message: 'Invalid user ID format',
             });
             return;
         }
@@ -427,7 +477,7 @@ const getUserById = (req, res, next) => __awaiter(void 0, void 0, void 0, functi
         if (!user) {
             res.status(404).json({
                 success: false,
-                message: 'User not found'
+                message: 'User not found',
             });
             return;
         }
@@ -435,7 +485,7 @@ const getUserById = (req, res, next) => __awaiter(void 0, void 0, void 0, functi
         res.status(200).json({
             success: true,
             data: userWithoutPassword,
-            message: 'User retrieved successfully'
+            message: 'User retrieved successfully',
         });
     }
     catch (error) {
@@ -446,12 +496,12 @@ exports.getUserById = getUserById;
 // Admin: Update user
 const updateUser = (req, res, next) => __awaiter(void 0, void 0, void 0, function* () {
     try {
-        const { username, email, role, isVerified } = req.body;
+        const { firstName, lastName, email, role, isVerified } = req.body;
         const { id } = req.params;
         if (!isValidObjectId(id)) {
             res.status(400).json({
                 success: false,
-                message: 'Invalid user ID format'
+                message: 'Invalid user ID format',
             });
             return;
         }
@@ -460,7 +510,7 @@ const updateUser = (req, res, next) => __awaiter(void 0, void 0, void 0, functio
         if (!user) {
             res.status(404).json({
                 success: false,
-                message: 'User not found'
+                message: 'User not found',
             });
             return;
         }
@@ -470,26 +520,17 @@ const updateUser = (req, res, next) => __awaiter(void 0, void 0, void 0, functio
             if (existingUser) {
                 res.status(400).json({
                     success: false,
-                    message: 'Email is already in use'
-                });
-                return;
-            }
-        }
-        // Validate username uniqueness if it's being changed
-        if (username && username !== user.username) {
-            const existingUser = yield User_1.default.findOne({ username, _id: { $ne: id } });
-            if (existingUser) {
-                res.status(400).json({
-                    success: false,
-                    message: 'Username is already in use'
+                    message: 'Email is already in use',
                 });
                 return;
             }
         }
         // Update user fields
         const updateData = {};
-        if (username)
-            updateData.username = username;
+        if (firstName)
+            updateData.firstName = firstName;
+        if (lastName)
+            updateData.lastName = lastName;
         if (email)
             updateData.email = email;
         if (role)
@@ -500,7 +541,7 @@ const updateUser = (req, res, next) => __awaiter(void 0, void 0, void 0, functio
         if (!updatedUser) {
             res.status(404).json({
                 success: false,
-                message: 'User not found'
+                message: 'User not found',
             });
             return;
         }
@@ -508,7 +549,7 @@ const updateUser = (req, res, next) => __awaiter(void 0, void 0, void 0, functio
         res.status(200).json({
             success: true,
             data: userWithoutPassword,
-            message: 'User updated successfully'
+            message: 'User updated successfully',
         });
     }
     catch (error) {
@@ -523,7 +564,7 @@ const deleteUser = (req, res, next) => __awaiter(void 0, void 0, void 0, functio
         if (!isValidObjectId(id)) {
             res.status(400).json({
                 success: false,
-                message: 'Invalid user ID format'
+                message: 'Invalid user ID format',
             });
             return;
         }
@@ -531,7 +572,7 @@ const deleteUser = (req, res, next) => __awaiter(void 0, void 0, void 0, functio
         if (!user) {
             res.status(404).json({
                 success: false,
-                message: 'User not found'
+                message: 'User not found',
             });
             return;
         }
@@ -539,14 +580,14 @@ const deleteUser = (req, res, next) => __awaiter(void 0, void 0, void 0, functio
         if (user.role === 'superadmin') {
             res.status(403).json({
                 success: false,
-                message: 'Super admin account cannot be deleted'
+                message: 'Super admin account cannot be deleted',
             });
             return;
         }
         yield user.deleteOne();
         res.status(200).json({
             success: true,
-            message: 'User deleted successfully'
+            message: 'User deleted successfully',
         });
     }
     catch (error) {
@@ -562,7 +603,7 @@ const updateUserRole = (req, res, next) => __awaiter(void 0, void 0, void 0, fun
         if (!isValidObjectId(id)) {
             res.status(400).json({
                 success: false,
-                message: 'Invalid user ID format'
+                message: 'Invalid user ID format',
             });
             return;
         }
@@ -571,7 +612,7 @@ const updateUserRole = (req, res, next) => __awaiter(void 0, void 0, void 0, fun
         if (!validRoles.includes(role)) {
             res.status(400).json({
                 success: false,
-                message: `Invalid role specified. Valid roles are: ${validRoles.join(', ')}`
+                message: `Invalid role specified. Valid roles are: ${validRoles.join(', ')}`,
             });
             return;
         }
@@ -579,7 +620,7 @@ const updateUserRole = (req, res, next) => __awaiter(void 0, void 0, void 0, fun
         if (!user) {
             res.status(404).json({
                 success: false,
-                message: 'User not found'
+                message: 'User not found',
             });
             return;
         }
@@ -587,7 +628,7 @@ const updateUserRole = (req, res, next) => __awaiter(void 0, void 0, void 0, fun
         if (user.role === 'superadmin') {
             res.status(403).json({
                 success: false,
-                message: 'Super admin role cannot be modified'
+                message: 'Super admin role cannot be modified',
             });
             return;
         }
@@ -595,7 +636,7 @@ const updateUserRole = (req, res, next) => __awaiter(void 0, void 0, void 0, fun
         if (role === 'superadmin') {
             res.status(403).json({
                 success: false,
-                message: 'Cannot elevate user to super admin role'
+                message: 'Cannot elevate user to super admin role',
             });
             return;
         }
@@ -605,7 +646,7 @@ const updateUserRole = (req, res, next) => __awaiter(void 0, void 0, void 0, fun
         res.status(200).json({
             success: true,
             data: userWithoutPassword,
-            message: 'User role updated successfully'
+            message: 'User role updated successfully',
         });
     }
     catch (error) {
@@ -613,3 +654,101 @@ const updateUserRole = (req, res, next) => __awaiter(void 0, void 0, void 0, fun
     }
 });
 exports.updateUserRole = updateUserRole;
+// Create admin user (requires admin token)
+const createAdmin = (req, res, next) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const { firstName, lastName, email, password, adminToken } = req.body;
+        // Validate required fields
+        if (!firstName || !lastName || !email || !password || !adminToken) {
+            res.status(400).json({
+                success: false,
+                message: 'All fields and admin token are required',
+                error: 'VALIDATION_ERROR',
+            });
+            return;
+        }
+        // Validate admin token
+        try {
+            const decoded = jsonwebtoken_1.default.verify(adminToken, process.env.ADMIN_CREATION_SECRET);
+            if (!decoded.purpose ||
+                decoded.purpose !== 'admin_creation') {
+                res.status(401).json({
+                    success: false,
+                    message: 'Invalid admin creation token',
+                    error: 'UNAUTHORIZED',
+                });
+                return;
+            }
+        }
+        catch (error) {
+            res.status(401).json({
+                success: false,
+                message: 'Invalid or expired admin creation token',
+                error: 'UNAUTHORIZED',
+            });
+            return;
+        }
+        // Validate email format
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) {
+            res.status(400).json({
+                success: false,
+                message: 'Please provide a valid email address.',
+                error: 'INVALID_EMAIL',
+            });
+            return;
+        }
+        // Validate password strength
+        if (!passwordSchema.validate(password)) {
+            res.status(400).json({
+                success: false,
+                message: 'Password must be at least 8 characters long and include uppercase, lowercase, number, and special character.',
+                error: 'WEAK_PASSWORD',
+            });
+            return;
+        }
+        // Check if user already exists
+        const existingUser = yield User_1.default.findOne({ email });
+        if (existingUser) {
+            res.status(409).json({
+                success: false,
+                message: 'An account with this email already exists.',
+                error: 'EMAIL_EXISTS',
+            });
+            return;
+        }
+        // Create admin user
+        const user = new User_1.default({
+            firstName,
+            lastName,
+            email,
+            password,
+            role: 'admin',
+            isVerified: true,
+        });
+        yield user.save();
+        // Send welcome email
+        try {
+            yield emailService.sendWelcomeEmail(email, `${firstName} ${lastName}`);
+        }
+        catch (emailError) {
+            console.error('Failed to send welcome email:', emailError);
+            // Continue with registration even if email fails
+        }
+        const _a = user.toObject(), { password: _ } = _a, userWithoutPassword = __rest(_a, ["password"]);
+        res.status(201).json({
+            success: true,
+            data: userWithoutPassword,
+            message: `Admin account for ${firstName} created successfully.`,
+        });
+    }
+    catch (error) {
+        console.error('Admin creation error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'An unexpected error occurred during admin creation. Please try again later.',
+            error: 'SERVER_ERROR',
+        });
+    }
+});
+exports.createAdmin = createAdmin;

@@ -8,20 +8,53 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
+var __rest = (this && this.__rest) || function (s, e) {
+    var t = {};
+    for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p) && e.indexOf(p) < 0)
+        t[p] = s[p];
+    if (s != null && typeof Object.getOwnPropertySymbols === "function")
+        for (var i = 0, p = Object.getOwnPropertySymbols(s); i < p.length; i++) {
+            if (e.indexOf(p[i]) < 0 && Object.prototype.propertyIsEnumerable.call(s, p[i]))
+                t[p[i]] = s[p[i]];
+        }
+    return t;
+};
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.submitReview = exports.deleteProduct = exports.updateProductImages = exports.updateProduct = exports.createProduct = exports.getProductById = exports.getAllProducts = void 0;
+exports.getProductsByCategory = exports.submitReview = exports.deleteProduct = exports.updateProductImages = exports.updateProduct = exports.createProduct = exports.getProductById = exports.getAllProducts = void 0;
 const Product_1 = require("../models/Product");
 const cloudinary_1 = __importDefault(require("../config/cloudinary"));
+const Category_1 = require("../models/Category");
+const catchAsyncErrors_1 = require("../middleware/catchAsyncErrors");
+// Helper function to calculate effective price
+const getEffectivePrice = (product) => {
+    const now = new Date();
+    const hasValidDiscount = product.discountPrice &&
+        (!product.discountStartDate || now >= product.discountStartDate) &&
+        (!product.discountEndDate || now <= product.discountEndDate);
+    return {
+        effectivePrice: hasValidDiscount && product.discountPrice
+            ? product.discountPrice
+            : product.price,
+        onSale: hasValidDiscount && product.discountPrice ? true : false,
+    };
+};
 // Get all products
 const getAllProducts = (req, res, next) => __awaiter(void 0, void 0, void 0, function* () {
     try {
-        const products = yield Product_1.Product.find();
+        const products = yield Product_1.Product.find().populate('category', 'name description');
+        // Add effectivePrice to each product
+        const productsWithEffectivePrice = products.map(product => {
+            const { effectivePrice, onSale } = getEffectivePrice(product);
+            const productObj = product.toObject();
+            return Object.assign(Object.assign({}, productObj), { effectivePrice,
+                onSale });
+        });
         res.status(200).json({
             success: true,
-            data: products,
+            data: productsWithEffectivePrice,
             message: 'Products retrieved successfully',
         });
     }
@@ -43,9 +76,14 @@ const getProductById = (req, res, next) => __awaiter(void 0, void 0, void 0, fun
             res.status(404).json({ success: false, message: 'Product not found' });
             return;
         }
+        // Add effectivePrice to product
+        const { effectivePrice, onSale } = getEffectivePrice(product);
+        const productObj = product.toObject();
+        const productWithEffectivePrice = Object.assign(Object.assign({}, productObj), { effectivePrice,
+            onSale });
         res.status(200).json({
             success: true,
-            data: product,
+            data: productWithEffectivePrice,
             message: 'Product retrieved successfully',
         });
     }
@@ -61,7 +99,16 @@ const getProductById = (req, res, next) => __awaiter(void 0, void 0, void 0, fun
 exports.getProductById = getProductById;
 const createProduct = (req, res, next) => __awaiter(void 0, void 0, void 0, function* () {
     try {
-        const { name, description, color, storage, price, stock } = req.body;
+        const { name, description, color, storage, price, discountPrice, discountStartDate, discountEndDate, stock, category, } = req.body;
+        // Verify category exists
+        const categoryExists = yield Category_1.Category.findById(category);
+        if (!categoryExists) {
+            res.status(400).json({
+                success: false,
+                message: 'Invalid category ID',
+            });
+            return;
+        }
         // Type check for files
         if (!req.files || Object.keys(req.files).length === 0) {
             res.status(400).json({
@@ -100,16 +147,13 @@ const createProduct = (req, res, next) => __awaiter(void 0, void 0, void 0, func
             }
         }
         // Create product with uploaded images
-        const product = new Product_1.Product({
-            name,
+        const product = new Product_1.Product(Object.assign(Object.assign(Object.assign({ name,
             description,
             color,
-            storage,
-            price: parseFloat(price),
-            stock: parseInt(stock, 10),
-            mainImage: mainImageUpload.secure_url,
-            images,
-        });
+            storage, price: parseFloat(price), stock: parseInt(stock, 10), mainImage: mainImageUpload.secure_url, images,
+            category }, (discountPrice && { discountPrice: parseFloat(discountPrice) })), (discountStartDate && {
+            discountStartDate: new Date(discountStartDate),
+        })), (discountEndDate && { discountEndDate: new Date(discountEndDate) })));
         yield product.save();
         res.status(201).json({
             success: true,
@@ -129,14 +173,29 @@ const createProduct = (req, res, next) => __awaiter(void 0, void 0, void 0, func
 exports.createProduct = createProduct;
 const updateProduct = (req, res, next) => __awaiter(void 0, void 0, void 0, function* () {
     try {
-        const updatedProduct = yield Product_1.Product.findByIdAndUpdate(req.params.id, req.body, { new: true });
+        const _a = req.body, { price, discountPrice, discountStartDate, discountEndDate } = _a, otherFields = __rest(_a, ["price", "discountPrice", "discountStartDate", "discountEndDate"]);
+        // Process numeric and date fields
+        const updateData = Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({}, otherFields), (price !== undefined && { price: parseFloat(price) })), (discountPrice !== undefined && {
+            discountPrice: discountPrice ? parseFloat(discountPrice) : null,
+        })), (discountStartDate !== undefined && {
+            discountStartDate: discountStartDate
+                ? new Date(discountStartDate)
+                : null,
+        })), (discountEndDate !== undefined && {
+            discountEndDate: discountEndDate ? new Date(discountEndDate) : null,
+        }));
+        const updatedProduct = yield Product_1.Product.findByIdAndUpdate(req.params.id, updateData, { new: true });
         if (!updatedProduct) {
             res.status(404).json({ success: false, message: 'Product not found' });
             return;
         }
+        // Add effective price calculation to response
+        const { effectivePrice, onSale } = getEffectivePrice(updatedProduct);
+        const productWithEffectivePrice = Object.assign(Object.assign({}, updatedProduct.toObject()), { effectivePrice,
+            onSale });
         res.status(200).json({
             success: true,
-            data: updatedProduct,
+            data: productWithEffectivePrice,
             message: 'Product updated successfully',
         });
     }
@@ -284,3 +343,55 @@ const submitReview = (req, res, next) => __awaiter(void 0, void 0, void 0, funct
     }
 });
 exports.submitReview = submitReview;
+// Add this new function to get products by category
+exports.getProductsByCategory = (0, catchAsyncErrors_1.catchAsyncErrors)((req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const categoryId = req.params.categoryId;
+        const { sort, minPrice, maxPrice } = req.query;
+        // Verify category exists
+        const category = yield Category_1.Category.findById(categoryId);
+        if (!category) {
+            return res.status(404).json({
+                success: false,
+                message: 'Category not found',
+            });
+        }
+        // Build query
+        let query = Product_1.Product.find({ category: categoryId });
+        // Apply price filters if provided
+        if (minPrice || maxPrice) {
+            const priceFilter = {};
+            if (minPrice)
+                priceFilter.$gte = Number(minPrice);
+            if (maxPrice)
+                priceFilter.$lte = Number(maxPrice);
+            query = query.where('price').equals(priceFilter);
+        }
+        // Apply sorting if provided
+        if (sort) {
+            const sortOrder = sort === 'desc' ? -1 : 1;
+            query = query.sort({ price: sortOrder });
+        }
+        // Execute query with category population
+        const products = yield query.populate('category', 'name description');
+        // Add effectivePrice to product
+        const productsWithEffectivePrice = products.map(product => {
+            const { effectivePrice, onSale } = getEffectivePrice(product);
+            const productObj = product.toObject();
+            return Object.assign(Object.assign({}, productObj), { effectivePrice,
+                onSale });
+        });
+        res.status(200).json({
+            success: true,
+            data: productsWithEffectivePrice,
+            message: `Products in category: ${category.name}`,
+        });
+    }
+    catch (error) {
+        res.status(500).json({
+            success: false,
+            message: 'Error retrieving products',
+            error: error instanceof Error ? error.message : 'Unknown error',
+        });
+    }
+}));

@@ -34,13 +34,74 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 const mongoose_1 = __importStar(require("mongoose"));
-const FavoriteSchema = new mongoose_1.Schema({
-    user: { type: mongoose_1.Schema.Types.ObjectId, ref: 'User', required: true },
-    items: [
+const DiscountSchema = new mongoose_1.Schema({
+    code: {
+        type: String,
+        required: true,
+        unique: true,
+        uppercase: true,
+        trim: true,
+    },
+    type: {
+        type: String,
+        enum: ['percentage', 'fixed', 'buyXgetY'],
+        required: true,
+    },
+    value: {
+        type: Number,
+        required: true,
+        min: 0,
+    },
+    minOrderValue: {
+        type: Number,
+        default: 0,
+        min: 0,
+    },
+    applicableProducts: [
         {
-            product: { type: mongoose_1.Schema.Types.ObjectId, ref: 'Product', required: true },
+            type: mongoose_1.Schema.Types.ObjectId,
+            ref: 'Product',
         },
     ],
-});
-// This is where we could add middleware or validation if needed
-exports.default = mongoose_1.default.model('Favorite', FavoriteSchema);
+    applicableCategories: [
+        {
+            type: mongoose_1.Schema.Types.ObjectId,
+            ref: 'Category',
+        },
+    ],
+    startDate: {
+        type: Date,
+        required: true,
+    },
+    endDate: {
+        type: Date,
+        required: true,
+    },
+    usageLimit: {
+        type: Number,
+        default: 0, // 0 means unlimited
+    },
+    usageCount: {
+        type: Number,
+        default: 0,
+    },
+    isActive: {
+        type: Boolean,
+        default: true,
+    },
+    // For buyXgetY discount type
+    buyQuantity: {
+        type: Number,
+    },
+    getQuantity: {
+        type: Number,
+    },
+    getDiscountValue: {
+        type: Number,
+    },
+}, { timestamps: true });
+// Add indexes for efficient queries
+DiscountSchema.index({ code: 1 });
+DiscountSchema.index({ isActive: 1 });
+DiscountSchema.index({ startDate: 1, endDate: 1 });
+exports.default = mongoose_1.default.model('Discount', DiscountSchema);
